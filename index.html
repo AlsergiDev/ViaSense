@@ -1,127 +1,47 @@
 <!DOCTYPE html>
-<html lang="es">
+<html>
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
-    <title>ESP32 GPS · Mapa en tiempo real</title>
-    <!-- Fuente Inter con display swap (no bloquea) -->
-    <link href="https://fonts.googleapis.com/css2?family=Inter:opsz,wght@14..32,300;400;500;600;700&display=swap" rel="stylesheet">
-    <!-- Leaflet CSS -->
+    <title>GPS Test - Polling</title>
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
-    <!-- Scripts con defer para no bloquear el renderizado -->
-    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" defer></script>
-    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2" defer></script>
-    <style>
-        *{margin:0;padding:0;box-sizing:border-box}
-        body{font-family:'Inter',sans-serif;background:#03050b;overflow:hidden;height:100vh;letter-spacing:.02em}
-        #map{position:absolute;top:0;left:0;width:100%;height:100%;z-index:1;background:#0a0f1a}
-        .vignette-overlay{position:absolute;top:0;left:0;width:100%;height:100%;background:radial-gradient(circle at center,transparent 40%,rgba(0,0,0,0.4) 70%,rgba(0,0,0,0.85) 100%);mix-blend-mode:multiply;pointer-events:none;z-index:15}
-        .hud{position:absolute;bottom:24px;left:24px;z-index:20;background:rgba(8,12,20,0.85);backdrop-filter:blur(16px);border-radius:32px;padding:14px 24px;border:1px solid rgba(30,220,150,0.25);color:#88ddcc;font-size:.8rem;pointer-events:none;font-family:monospace}
-        .hud span{font-weight:700;color:#e0f2fe}
-        .fab-group{position:absolute;bottom:28px;right:24px;display:flex;flex-direction:column;gap:14px;z-index:20;pointer-events:auto}
-        .fab{width:52px;height:52px;background:rgba(18,24,34,0.85);backdrop-filter:blur(12px);border-radius:50%;display:flex;align-items:center;justify-content:center;border:1px solid rgba(0,255,180,0.3);cursor:pointer;font-size:24px;color:#c0e0ff;transition:all .2s ease}
-        .fab:hover{background:rgba(30,200,150,0.2);border-color:#1effbc;transform:scale(1.05);color:#1effbc}
-        .custom-map-attribution{position:absolute;bottom:12px;right:12px;z-index:25;color:#88aacc;font-size:10px;background:rgba(0,0,0,0.5);backdrop-filter:blur(4px);padding:4px 10px;border-radius:20px;pointer-events:none}
-        .leaflet-tooltip{background:rgba(0,0,0,0.85);border:1px solid #ffb347;border-radius:20px}
-        .error-box{position:absolute;bottom:100px;left:20px;z-index:30;background:rgba(255,80,80,0.9);color:#fff;padding:8px 15px;border-radius:20px;font-size:12px;pointer-events:none;font-family:monospace;backdrop-filter:blur(4px)}
-        .pulsing-orange{animation:pulseOrangeGlow 1.2s infinite alternate}
-        @keyframes pulseOrangeGlow{0%{r:12px;filter:drop-shadow(0 0 2px orange)}100%{r:16px;filter:drop-shadow(0 0 16px #ffaa33)}}
-    </style>
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+    <style>#map{height:100vh;}</style>
 </head>
 <body>
 <div id="map"></div>
-<div class="vignette-overlay"></div>
-<div class="hud">
-    <div>📍 UBICACIÓN ACTUAL</div>
-    <div><span id="lat">--</span>°N &nbsp; <span id="lng">--</span>°W</div>
-    <div style="font-size:0.7rem; margin-top:6px;">🔹 ESPERANDO DATOS...</div>
-</div>
-<div class="fab-group">
-    <div class="fab" id="zoom-in">+</div>
-    <div class="fab" id="zoom-out">−</div>
-    <div class="fab" id="center">◎</div>
-</div>
-<div class="custom-map-attribution">MAPA GPS ° ESP32</div>
-<div id="error-msg" class="error-box" style="display:none"></div>
-
 <script>
-    (function(){
-        // Esperar a que el DOM esté listo (por si los scripts con defer aún no terminaron)
-        window.addEventListener('DOMContentLoaded', () => {
-            // Inicializar mapa
-            const map = L.map('map').setView([10.1390, -64.6860], 14);
-            L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
-                attribution: '',
-                subdomains: 'abcd'
-            }).addTo(map);
+    const map = L.map('map').setView([10.1390, -64.6860], 14);
+    L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', { subdomains: 'abcd' }).addTo(map);
+    let marker = null;
 
-            let currentMarker = null;
+    const supabase = window.supabase.createClient(
+        'https://zhofrncmtsaaokqickpr.supabase.co',
+        'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inpob2ZybmNtdHNhYW9rcWlja3ByIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzgxMTYxMDMsImV4cCI6MjA5MzY5MjEwM30.bFXibmOOH-Up-AUohXFA-5Vh1pbI33VTfTJTZkyWhuo'
+    );
 
-            function actualizarMarcador(lat,lng){
-                if(currentMarker) map.removeLayer(currentMarker);
-                currentMarker = L.circleMarker([lat,lng], {
-                    radius:14, color:'#ffaa33', weight:4, opacity:1,
-                    fillColor:'#ff8800', fillOpacity:0.8
-                }).addTo(map);
-                currentMarker.bindTooltip("📍 UBICACIÓN ACTUAL", {direction:'top'});
-                if(currentMarker.getElement()) currentMarker.getElement().classList.add('pulsing-orange');
-                document.getElementById('lat').innerText = lat.toFixed(5);
-                document.getElementById('lng').innerText = lng.toFixed(5);
-                map.setView([lat,lng], map.getZoom());
-            }
+    async function actualizar() {
+        const { data, error } = await supabase
+            .from('ubicaciones')
+            .select('lat, lng')
+            .order('created_at', { ascending: false })
+            .limit(1);
+        if (error) {
+            console.error(error);
+            return;
+        }
+        if (data && data[0]) {
+            const { lat, lng } = data[0];
+            if (marker) map.removeLayer(marker);
+            marker = L.circleMarker([lat, lng], { radius: 14, color: '#ffaa33', fillColor: '#ff8800', fillOpacity: 0.8 }).addTo(map);
+            marker.bindTooltip("📍 UBICACIÓN ACTUAL").openTooltip();
+            map.setView([lat, lng], map.getZoom());
+            console.log(`Actualizado a: ${lat}, ${lng}`);
+        }
+    }
 
-            // Supabase credenciales (ya correctas)
-            const SUPABASE_URL = "https://zhofrncmtsaaokqickpr.supabase.co";
-            const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inpob2ZybmNtdHNhYW9rcWlja3ByIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzgxMTYxMDMsImV4cCI6MjA5MzY5MjEwM30.bFXibmOOH-Up-AUohXFA-5Vh1pbI33VTfTJTZkyWhuo";
-
-            const supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
-            console.log("Conectando a Supabase...");
-
-            // Suscripción en tiempo real
-            supabase
-                .channel('tabla-ubicaciones')
-                .on('postgres_changes', { event:'INSERT', schema:'public', table:'ubicaciones' }, (payload) => {
-                    const nueva = payload.new;
-                    if(nueva && nueva.lat && nueva.lng){
-                        console.log(`📡 Nueva ubicación: ${nueva.lat}, ${nueva.lng}`);
-                        actualizarMarcador(nueva.lat, nueva.lng);
-                    }
-                })
-                .subscribe((status,err) => {
-                    if(status === 'SUBSCRIBED') console.log("✅ Suscrito a cambios");
-                    else if(err) mostrarError("Error de conexión con Supabase");
-                });
-
-            // Cargar última ubicación
-            supabase
-                .from('ubicaciones')
-                .select('lat,lng')
-                .order('created_at', { ascending: false })
-                .limit(1)
-                .then(({data,error}) => {
-                    if(error) mostrarError("Error al leer última ubicación");
-                    else if(data && data.length) actualizarMarcador(data[0].lat, data[0].lng);
-                });
-
-            function mostrarError(msg){
-                const errDiv = document.getElementById('error-msg');
-                errDiv.textContent = msg;
-                errDiv.style.display = 'block';
-                setTimeout(() => errDiv.style.display = 'none', 8000);
-            }
-
-            // Controles FAB
-            document.getElementById('zoom-in').addEventListener('click', () => map.zoomIn());
-            document.getElementById('zoom-out').addEventListener('click', () => map.zoomOut());
-            document.getElementById('center').addEventListener('click', () => {
-                if(currentMarker) map.setView(currentMarker.getLatLng(), 17);
-                else map.setView([10.1390, -64.6860], 15);
-            });
-
-            window.addEventListener('resize', () => map.invalidateSize());
-            console.log("Página optimizada lista");
-        });
-    })();
+    actualizar();
+    setInterval(actualizar, 3000); // cada 3 segundos
 </script>
 </body>
 </html>
